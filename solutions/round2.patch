@@ -1,0 +1,70 @@
+diff -ruN ./svcutils/cache.py ./svcutils/cache.py
+--- ./svcutils/cache.py	2026-10-07 11:58:08
++++ ./svcutils/cache.py	2026-10-07 11:55:26
+@@ -62,11 +62,12 @@
+             del self._data[key]
+             self.stats.misses += 1
+             return default
++        self._data.move_to_end(key)
+         self.stats.hits += 1
+         return value
+ 
+     def set(self, key: K, value: V, ttl: float | None = None) -> None:
+-        expires_at = time.monotonic() + (self.ttl if ttl is None else ttl)
++        expires_at = self._clock() + (self.ttl if ttl is None else ttl)
+         if key in self._data:
+             self._data.move_to_end(key)
+         self._data[key] = (value, expires_at)
+diff -ruN ./svcutils/ratelimit.py ./svcutils/ratelimit.py
+--- ./svcutils/ratelimit.py	2026-10-07 11:58:08
++++ ./svcutils/ratelimit.py	2026-10-07 11:55:33
+@@ -31,7 +31,7 @@
+         now = self._clock()
+         elapsed = now - self._last
+         if elapsed > 0:
+-            self._tokens = min(self.capacity, self._tokens + int(elapsed * self.rate))
++            self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)
+             self._last = now
+ 
+     @property
+@@ -58,8 +58,6 @@
+ class RateLimiterRegistry:
+     """Lazily creates one bucket per key (e.g. per API customer)."""
+ 
+-    _buckets: dict[str, TokenBucket] = {}
+-
+     def __init__(
+         self,
+         rate: float,
+@@ -69,6 +67,7 @@
+         self.rate = rate
+         self.capacity = capacity
+         self._clock = clock
++        self._buckets: dict[str, TokenBucket] = {}
+ 
+     def bucket(self, key: str) -> TokenBucket:
+         if key not in self._buckets:
+diff -ruN ./svcutils/retry.py ./svcutils/retry.py
+--- ./svcutils/retry.py	2026-10-07 11:58:08
++++ ./svcutils/retry.py	2026-10-07 11:55:38
+@@ -29,16 +29,18 @@
+         raise ValueError("max_attempts must be >= 1")
+ 
+     def decorator(fn: Callable[P, R]) -> Callable[P, R]:
++        @functools.wraps(fn)
+         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+             delay = base_delay
+-            for attempt in range(1, max_attempts):
++            for attempt in range(1, max_attempts + 1):
+                 try:
+                     return fn(*args, **kwargs)
+-                except Exception:
++                except retry_on:
+                     if attempt == max_attempts:
+                         raise
+                     sleep(min(delay, max_delay))
+                     delay *= backoff
++            raise AssertionError("unreachable")
+ 
+         return wrapper
+ 

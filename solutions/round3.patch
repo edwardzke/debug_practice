@@ -1,0 +1,72 @@
+diff -ruN ./annopipe/consensus.py ./annopipe/consensus.py
+--- ./annopipe/consensus.py	2026-10-07 11:58:08
++++ ./annopipe/consensus.py	2026-10-07 11:57:48
+@@ -32,7 +32,8 @@
+     counts = Counter(a.label for a in annotations)
+     if not counts:
+         return None
+-    return counts.most_common(1)[0][0]
++    best = max(counts.values())
++    return min(label for label, n in counts.items() if n == best)
+ 
+ 
+ def group_by_item(annotations: Iterable[Annotation]) -> dict[str, list[Annotation]]:
+@@ -50,6 +51,7 @@
+     ``annotations`` may be any iterable, including a one-shot generator such
+     as the one returned by ``parse.load_jsonl``. Results are sorted by item_id.
+     """
++    annotations = list(annotations)
+     all_labelers = {a.labeler_id for a in annotations}
+     if len(all_labelers) < min_labelers:
+         return []
+diff -ruN ./annopipe/geometry.py ./annopipe/geometry.py
+--- ./annopipe/geometry.py	2026-10-07 11:58:08
++++ ./annopipe/geometry.py	2026-10-07 11:56:25
+@@ -37,7 +37,7 @@
+     iy1 = max(a[1], b[1])
+     ix2 = min(a[2], b[2])
+     iy2 = min(a[3], b[3])
+-    inter = (ix2 - ix1) * (iy2 - iy1)
++    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+     union = area(a) + area(b) - inter
+     return inter / union if union > 0 else 0.0
+ 
+diff -ruN ./annopipe/parse.py ./annopipe/parse.py
+--- ./annopipe/parse.py	2026-10-07 11:58:08
++++ ./annopipe/parse.py	2026-10-07 11:56:33
+@@ -12,12 +12,13 @@
+ 
+ from __future__ import annotations
+ 
++import copy
+ import json
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Iterable, Iterator
+ 
+-from .geometry import Box, xywh_to_xyxy, xyxy_to_xywh
++from .geometry import Box, xywh_to_xyxy
+ 
+ DEFAULT_RECORD: dict[str, Any] = {
+     "bbox": None,
+@@ -41,17 +42,17 @@
+ 
+ 
+ def parse_record(raw: dict[str, Any]) -> Annotation:
+-    record = dict(DEFAULT_RECORD)
++    record = copy.deepcopy(DEFAULT_RECORD)
+     record["attributes"].update(raw.get("attributes") or {})
+     for key in ("item_id", "labeler_id", "label"):
+         if key not in raw:
+             raise KeyError(key)
+         record[key] = raw[key]
+     if raw.get("bbox") is not None:
+-        record["bbox"] = xyxy_to_xywh(raw["bbox"])
++        record["bbox"] = xywh_to_xyxy(raw["bbox"])
+     return Annotation(
+         item_id=str(record["item_id"]),
+-        labeler_id=record["labeler_id"],
++        labeler_id=str(record["labeler_id"]),
+         label=str(record["label"]).strip().lower(),
+         bbox=record["bbox"],
+         attributes=record["attributes"],
