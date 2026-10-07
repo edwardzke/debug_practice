@@ -1,0 +1,66 @@
+diff -ruN ./taskqueue/metrics.py ./taskqueue/metrics.py
+--- ./taskqueue/metrics.py	2026-10-07 11:58:08
++++ ./taskqueue/metrics.py	2026-10-07 11:54:35
+@@ -20,7 +20,7 @@
+         if t.completed_at is not None and window_start <= t.completed_at < window_end
+     )
+     hours = (window_end - window_start) / 3600
+-    return count // hours
++    return count / hours
+ 
+ 
+ def average_handle_time(completed: Iterable[Task]) -> float | None:
+diff -ruN ./taskqueue/models.py ./taskqueue/models.py
+--- ./taskqueue/models.py	2026-10-07 11:58:08
++++ ./taskqueue/models.py	2026-10-07 11:54:14
+@@ -24,12 +24,12 @@
+         task_id: str,
+         priority: int = 0,
+         created_at: float = 0.0,
+-        tags: list[str] = [],
++        tags: list[str] | None = None,
+     ) -> None:
+         self.task_id = task_id
+         self.priority = priority
+         self.created_at = created_at
+-        self.tags = tags
++        self.tags = list(tags) if tags is not None else []
+         self.status = TaskStatus.PENDING
+         self.attempts = 0
+         self.assigned_to: str | None = None
+@@ -64,7 +64,7 @@
+         self.active_tasks: set[str] = set()
+ 
+     def has_capacity(self) -> bool:
+-        return len(self.active_tasks) <= self.capacity
++        return len(self.active_tasks) < self.capacity
+ 
+     def can_handle(self, task: Task) -> bool:
+         """A labeler can handle a task if they have every skill it is tagged with."""
+diff -ruN ./taskqueue/queue.py ./taskqueue/queue.py
+--- ./taskqueue/queue.py	2026-10-07 11:58:08
++++ ./taskqueue/queue.py	2026-10-07 11:54:19
+@@ -30,7 +30,7 @@
+     def push(self, task: Task) -> None:
+         if task.task_id in self._entries:
+             self.remove(task.task_id)
+-        entry = [task.priority, task.created_at, next(self._counter), task]
++        entry = [-task.priority, task.created_at, next(self._counter), task]
+         self._entries[task.task_id] = entry
+         heapq.heappush(self._heap, entry)
+ 
+diff -ruN ./taskqueue/scheduler.py ./taskqueue/scheduler.py
+--- ./taskqueue/scheduler.py	2026-10-07 11:58:08
++++ ./taskqueue/scheduler.py	2026-10-07 11:54:30
+@@ -97,9 +97,9 @@
+         """Reclaim stale tasks. Returns the tasks that were reclaimed."""
+         now = self.clock()
+         expired: list[Task] = []
+-        for task_id, task in self.in_flight.items():
++        for task_id, task in list(self.in_flight.items()):
+             assert task.assigned_at is not None
+-            if now - task.assigned_at > self.timeout_s:
++            if now - task.assigned_at >= self.timeout_s:
+                 del self.in_flight[task_id]
+                 if task.assigned_to is not None:
+                     self._labeler(task.assigned_to).active_tasks.discard(task_id)

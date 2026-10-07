@@ -1,50 +1,50 @@
-# Round 1 Solutions — Labeling Task Queue (SPOILERS)
+# Round 1 Solutions — Course Selection & Project Staffing (SPOILERS)
 
-6 bugs: 5 caught by tests, 1 only in the bug report. Reference fix: `round1.patch`.
+4 bugs (they break Tests 1 and 2) plus 1 function to implement (Test 3). Reference fix: `round1.patch`.
 
-**Triage tip:** 16 of 32 tests fail at first, and several fail with `AttributeError: 'NoneType'...`
-in scheduler tests that look unrelated. Many failures with one shared root cause is a signal to fix the lowest layer first
-(models, then queue, then scheduler) and re-run after every fix.
+**Triage tip:** Test 1 only covers simple projects, so it can only fail because of the ordering and
+capacity logic in `assignment.py`. Fix that first. Test 2 then adds the prerequisite path
+(`find_eligible_contributors` → `Project.required_course_ids` → `Contributor`). Print the actual vs
+expected dict for each project and compare them one project at a time.
 
 ---
 
-## Bug 1 — Mutable default argument (`models.py`, `Task.__init__`)
-**Symptom:** `test_tags_are_independent_between_tasks`, `test_task_copies_tag_list`, plus scheduler tests that
-return `None` when a task should have been assigned. Results can change with test order.
-- **Hint 1:** Add a tag to one task, then print a different, freshly created task's tags.
-- **Hint 2:** Look at the default value of `tags` in `__init__`. When is it evaluated?
-- **Fix:** `tags: list[str] | None = None` and `self.tags = list(tags) if tags is not None else []`.
-- **Why:** Default values are evaluated once, when the function is defined, so every `Task()` shares one list.
-  Assigning the caller's list directly also aliases it, which is why `test_task_copies_tag_list` fails.
+## Bug 1 — Priority sorted ascending (`assignment.py`, `sort_projects_by_priority`)
+**Symptom (Test 1):** Copper Lantern (priority 3) gets the first contributors instead of Galaxy Velvet (8).
+- **Hint 1:** Print the project names in the order `sort_projects_by_priority` returns them.
+- **Fix:** `sorted(projects, key=lambda p: p.priority, reverse=True)`.
 
-## Bug 2 — Capacity off-by-one (`models.py`, `Labeler.has_capacity`)
-**Symptom:** `test_labeler_capacity_limit`, `test_assign_respects_capacity`: a labeler with capacity 1 gets 2 tasks.
-- **Hint 1:** With `capacity=2` and 2 active tasks, what does `has_capacity()` return?
-- **Fix:** `<=` → `<`.
+## Bug 2 — Headcount check is `>= 0` (`assignment.py`, `assign_contributors`)
+**Symptom (Test 1):** Every project ends up with one person more than its headcount.
+- **Hint 1:** When `available_headcount()` returns 0, should anyone else be added?
+- **Fix:** `if project.available_headcount() > 0:`.
 
-## Bug 3 — Inverted heap priority (`queue.py`, `push`)
-**Symptom:** `test_higher_priority_pops_first`: the lowest priority comes out first.
-- **Hint 1:** `heapq` is a *min*-heap. The docstring says higher priority should come out first.
-- **Hint 2:** Look at the first element of the entry tuple.
-- **Fix:** `entry = [-task.priority, task.created_at, next(self._counter), task]`.
-- **Note:** The counter keeps `Task` objects out of comparisons (they aren't orderable) and gives FIFO order on exact ties.
+## Bug 3 — Completion status not checked (`assignment.py`, `find_eligible_contributors`)
+**Symptom (Test 2, visible once Bug 4 is fixed):** Ava Chen joins Midnight Orchid although her Medical
+Terminology status is `in_progress`. Elif's Thai course is also only `in_progress`.
+- **Hint 1:** Open `data/contributor_courses.csv`. Which statuses besides `completed` appear?
+- **Hint 2:** `Contributor` has a method marked correct that nobody calls...
+- **Fix:** `if all(contributor.has_completed(course_id) for course_id in required):`.
+- **Why:** `course_id in contributor.course_status` only means "has a record for the course", not "completed it".
 
-## Bug 4 — Dict mutated while iterating (`scheduler.py`, `expire_stale`)
-**Symptom:** `RuntimeError: dictionary changed size during iteration`. It only appears after Bugs 1–3 are fixed (cascade).
-- **Hint 1:** Read the traceback: which line deletes from the dict you're looping over?
-- **Fix:** `for task_id, task in list(self.in_flight.items()):`, i.e. iterate over a snapshot.
+## Bug 4 — Course ID read from the class variable (`models.py`, `Project.required_course_ids`)
+**Symptom (Test 2):** Every project with prerequisites gets nobody, or (while Bug 3 is still there) the
+wrong people. `required_course_ids()` returns `{''}`.
+- **Hint 1:** Print `project.required_course_ids()` for Midnight Orchid.
+- **Hint 2:** Look closely at the capitalization: `Course.course_id` vs `course.course_id`.
+- **Fix:** `{course.course_id for course in self.required_courses}`.
+- **Why:** `Course.course_id` is the *class* attribute (default `""`), not the attribute set on each instance in `__init__`.
+  The loop variable is never used, which is a lint-level clue.
 
-## Bug 5 — Timeout boundary (`scheduler.py`, `expire_stale`)
-**Symptom:** `test_task_expires_exactly_at_timeout`.
-- **Hint 1:** The class docstring says a task is stale once it has been held "for `timeout_s` seconds **or more**".
-- **Fix:** `>` → `>=`.
+## Test 3 — Implement `most_needed_course` (`analysis.py`)
+**Approach:** For each course (in file order):
+1. Build *copies* of the contributors with that course marked `completed`. Don't mutate the
+   real objects; the test checks for that.
+2. Run `assign_contributors(projects, copies)`. It resets projects at the start, so repeated runs are safe.
+3. Score the result as `(count_filled_projects(...), total assigned)`. Keep the best, and use a strict `>` so ties keep the earlier course.
+4. Return the course **name**, not its id.
 
-## Bug 6 (bug report OPS-2291) — Floor division (`metrics.py`, `throughput_per_hour`)
-**Symptom:** 3 tasks in 2 hours shows 1.0 instead of 1.5. The existing tests use whole-number answers, so they pass.
-- **Hint 1:** Write the test from the ticket first (3 completions, a 7200-second window, expect 1.5).
-- **Fix:** `count // hours` → `count / hours`.
-- **Interview move:** Reproduce the bug with a failing test *before* fixing it, and say that out loud.
+**Expected answer:** `LiDAR Annotation`. It lets Femi fill the last Silver Quokka slot, for 5 full projects; every other course gives 4.
+**Trap:** The course required by the most projects (Intro to Data Labeling) is *not* the answer.
 
-## Red herrings
-`average_handle_time`, `labeler_utilization`, `summary`, `complete` and
-`TaskQueue.remove/peek` are all correct. If you "fixed" one of them, ask yourself which test or spec justified the change.
+Reference implementation: see the `analysis.py` hunk in `round1.patch`.
